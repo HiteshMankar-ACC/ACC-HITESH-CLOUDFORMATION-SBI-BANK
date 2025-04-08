@@ -1,0 +1,257 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'SBI Network Infrastructure - Main Stack'
+
+
+Parameters:
+  Environment:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Environment name for resource tagging
+  
+  TemplateURL:
+    Description: Template URL for vpc nested stack
+    Type: String
+    Default: https://shruti-cf-ingress-vpc-nested-stack-bucket-2025-04-04.s3.ap-south-1.amazonaws.com/egress-vpc1.yaml
+
+  TemplateURLSubnet:
+    Description: Template URL for subnet nested stack
+    Type: String
+    Default: https://shruti-cf-ingress-vpc-nested-stack-bucket-2025-04-04.s3.ap-south-1.amazonaws.com/hitesh-subnet-7.30pm.yml
+
+  TemplateURLIGWNAT:
+    Description: Template URL for combined IGW and NAT Gateway stack
+    Type: String
+    Default: https://shruti-cf-ingress-vpc-nested-stack-bucket-2025-04-04.s3.ap-south-1.amazonaws.com/internet-Nat-gateway-egress-v0.1.yml
+  
+  TemplateURLRT:
+    Description: Template URL for RT nested stack
+    Type: String
+    Default: https://shruti-cf-ingress-vpc-nested-stack-bucket-2025-04-04.s3.ap-south-1.amazonaws.com/RT.yaml
+
+  # TemplateURLTGW:
+  #   Description: Template URL for Transit Gateway stack
+  #   Type: String
+  #   Default: https://shruti-cf-ingress-vpc-nested-stack-bucket-2025-04-04.s3.ap-south-1.amazonaws.com/network-tgw.yaml
+
+  TransitGatewayID:
+    Description: Transit Gateway ID for TGW Attachment stack
+    Type: String
+
+
+  TemplateURLTGWAttachment:
+    Description: Template URL for Transit Gateway Attachment stack
+    Type: String
+    Default: https://shruti-cf-ingress-vpc-nested-stack-bucket-2025-04-04.s3.ap-south-1.amazonaws.com/Egress-web-tgw-attachment.yml
+    
+
+  Owner:
+    Type: String
+    Default: "SBI-Network-Team"
+    Description: Owner tag value
+
+  Vendor:
+    Type: String
+    Default: ACC
+    Description: Vendor tag value
+
+  ResourceName:
+    Type: String
+    Default: sbi-project
+    Description: Name of the resources created throughout the module
+
+Resources: 
+ # VPC Stack
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref TemplateURL
+      Parameters:
+        Environment: !Ref Environment
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: SBI-VPC-Stack
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Subnet Stack
+  SubnetStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPCStack
+    Properties:
+      TemplateURL: !Ref TemplateURLSubnet
+      Parameters:
+        Environment: !Ref Environment
+        EgressWebVPC: !GetAtt VPCStack.Outputs.VpcId
+        EgressWebVpcCidr: !GetAtt VPCStack.Outputs.VpcCidr
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: SBI-Subnet-Stack
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Combined IGW and NAT Gateway Stack
+  IGWNATStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: 
+      - VPCStack
+      - SubnetStack
+    Properties:
+      TemplateURL: !Ref TemplateURLIGWNAT
+      Parameters:
+        Environment: !Ref Environment
+        EgressWebVPC: !GetAtt VPCStack.Outputs.VpcId
+        SubnetNatAz1: !GetAtt SubnetStack.Outputs.SubnetNatAz1    # Changed from PubSubNatAz1
+        SubnetNatAz2: !GetAtt SubnetStack.Outputs.SubnetNatAz2
+        ResourceName: !Ref ResourceName
+        Owner: !Ref Owner
+        Vendor: !Ref Vendor
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: SBI-IGW-NAT-Stack
+        - Key: Environment
+          Value: !Ref Environment
+    
+  # Transit Gateway Stack
+  # TransitGatewayStack:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: !Ref TemplateURLTGW
+  #     Parameters:
+  #       Environment: !Ref Environment
+  #       ResourceName: !Ref ResourceName
+  #       Owner: !Ref Owner
+  #       Vendor: !Ref Vendor
+  #     TimeoutInMinutes: 30
+  #     Tags:
+  #       - Key: Name
+  #         Value: SBI-TGW-Stack
+  #       - Key: Environment
+  #         Value: !Ref Environment  
+  # Transit Gateway Attachment Stack
+  TGWAttachmentStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: 
+      - VPCStack
+      - SubnetStack
+      # - TransitGatewayStack
+    Properties:
+      TemplateURL: !Ref TemplateURLTGWAttachment
+      Parameters:
+        Environment: !Ref Environment
+        IngressTgwId: !Ref TransitGatewayID
+        EgressWebVPC: !GetAtt VPCStack.Outputs.VpcId
+        SubnetMgmtTgwEniAz1Id: !GetAtt SubnetStack.Outputs.SubnetMgmtTgwEniAz1
+        SubnetMgmtTgwEniAz2Id: !GetAtt SubnetStack.Outputs.SubnetMgmtTgwEniAz2
+        ResourceName: !Ref ResourceName
+        Owner: !Ref Owner
+        Vendor: !Ref Vendor
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: SBI-TGW-Attachment-Stack
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Route Table Stack
+  RouteTableStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: 
+      - VPCStack
+      - SubnetStack
+      - IGWNATStack
+    Properties:
+      TemplateURL: !Ref TemplateURLRT
+      Parameters:    
+        Environment: !Ref Environment
+        EgressWebVPC: !GetAtt VPCStack.Outputs.VpcId
+        EgressWebVPCCidr: !GetAtt VPCStack.Outputs.VpcCidr
+        EgressWebIGW: !GetAtt IGWNATStack.Outputs.IgwId
+        NatGatewayAz1: !GetAtt IGWNATStack.Outputs.NatGatewayAz1
+        NatGatewayAz2: !GetAtt IGWNATStack.Outputs.NatGatewayAz2
+        SubnetNatAz1: !GetAtt SubnetStack.Outputs.SubnetNatAz1
+        SubnetNatAz2: !GetAtt SubnetStack.Outputs.SubnetNatAz2
+        GwlbEndRTAssociation1aSubnetId: !GetAtt SubnetStack.Outputs.SubnetGwlbEndAz1
+        GwlbEndRTAssociation1bSubnetId: !GetAtt SubnetStack.Outputs.SubnetGwlbEndAz2
+        PubNat1aRTAssociation1aSubnetId: !GetAtt SubnetStack.Outputs.SubnetNatAz1
+        PubNat1aRTAssociation1bSubnetId: !GetAtt SubnetStack.Outputs.SubnetNatAz2
+        FwLanEniRTAssociation1aSubnetId: !GetAtt SubnetStack.Outputs.SubnetFwLanAz1
+        FwLanEniRTAssociation1bSubnetId: !GetAtt SubnetStack.Outputs.SubnetFwLanAz2
+        ProxyNlbRTAssociatione1aSubnetId: !GetAtt SubnetStack.Outputs.SubnetProxyNlbAz1
+        ProxyNlbRTAssociatione1bSubnetId: !GetAtt SubnetStack.Outputs.SubnetProxyNlbAz2
+        ProxyServerRTAssociation1aSubnetId: !GetAtt SubnetStack.Outputs.SubnetProxyServerAz1
+        ProxyServerRTAssociation1bSubnetId: !GetAtt SubnetStack.Outputs.SubnetProxyServerAz2
+        NlbDlpServerRTAssociation1aSubnetId: !GetAtt SubnetStack.Outputs.SubnetNlbDlpServerAz1
+        NlbDlpServerRTAssociation1bSubnetId: !GetAtt SubnetStack.Outputs.SubnetNlbDlpServerAz2
+        DlpServerRTAssociation1aSubnetId: !GetAtt SubnetStack.Outputs.SubnetDlpServerAz1
+        DlpServerRTAssociation1bSubnetId: !GetAtt SubnetStack.Outputs.SubnetDlpServerAz2
+        MgmtTgwEni1aRTAssociation1aSubnetId: !GetAtt SubnetStack.Outputs.SubnetMgmtTgwEniAz1
+        MgmtTgwEni1aRTAssociation1bSubnetId: !GetAtt SubnetStack.Outputs.SubnetMgmtTgwEniAz2
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: SBI-Route-Table-Stack
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !GetAtt VPCStack.Outputs.VpcId
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcId
+
+  VpcCidr:
+    Description: VPC CIDR Block
+    Value: !GetAtt VPCStack.Outputs.VpcCidr
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcCidr
+
+  InternetGatewayId:
+    Description: Internet Gateway ID
+    Value: !GetAtt IGWNATStack.Outputs.IgwId
+    Export:
+      Name: !Sub ${AWS::StackName}-IgwId
+
+  NatGatewayAz1:
+    Description: NAT Gateway AZ1 ID
+    Value: !GetAtt IGWNATStack.Outputs.NatGatewayAz1
+    Export:
+      Name: !Sub ${AWS::StackName}-NatGatewayAz1Id
+
+  NatGatewayAz2:
+    Description: NAT Gateway AZ2 ID
+    Value: !GetAtt IGWNATStack.Outputs.NatGatewayAz2
+    Export:
+      Name: !Sub ${AWS::StackName}-NatGatewayAz2Id
+
+  EipNatAz1PublicIP:
+    Description: NAT Gateway AZ1 Public IP
+    Value: !GetAtt IGWNATStack.Outputs.EipNatAz1PublicIP
+    Export:
+      Name: !Sub ${AWS::StackName}-EipNatAz1PublicIP
+
+  EipNatAz2PublicIP:
+    Description: NAT Gateway AZ2 Public IP
+    Value: !GetAtt IGWNATStack.Outputs.EipNatAz2PublicIP
+    Export:
+      Name: !Sub ${AWS::StackName}-EipNatAz2PublicIP
+
+
+  # TransitGatewayId:
+  #   Description: Transit Gateway ID
+  #   Value: !GetAtt TransitGatewayStack.Outputs.SBITransitGatewayId
+  #   Export:
+  #     Name: !Sub ${AWS::StackName}-TransitGatewayId
+
+  TGWAttachmentId:
+    Description: Transit Gateway Attachment ID
+    Value: !GetAtt TGWAttachmentStack.Outputs.EgressWebTGWAttachmentId
+    Export:
+      Name: !Sub ${AWS::StackName}-TGWAttachmentId
